@@ -291,19 +291,21 @@ def lambda_handler(event, context):
             "error_type": clamav.get("error_type"),
         }
 
-        return build_response(
-            200,
-            {
-                "file_name": key,
-                "hash": file_hash,
-                "object_size_bytes": object_size,
-                "zip_entry_count": zip_meta["total_files"],
-                "estimated_uncompressed_bytes": zip_meta["total_uncompressed"],
-                "extracted_count": extracted_count,
-                "clamav": response_clamav,
-                "status": "Success",
-            },
-        )
+        final_response_body = {
+            "file_name": key,
+            "hash": file_hash,
+            "object_size_bytes": object_size,
+            "zip_entry_count": zip_meta["total_files"],
+            "estimated_uncompressed_bytes": zip_meta["total_uncompressed"],
+            "extracted_count": extracted_count,
+            "clamav": response_clamav,
+            "status": "Success",
+        }
+        
+        # [수정 포인트] 로그 이벤트에서 볼 수 있도록 print 추가
+        print(f"[*] Final Response: {json.dumps(final_response_body, indent=2)}")
+
+        return build_response(200, final_response_body)
 
     except zipfile.BadZipFile:
         print("[!] 손상된 ZIP 파일입니다.")
