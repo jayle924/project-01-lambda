@@ -1,4 +1,4 @@
-# S3 name: s3-upload-trigger
+S3 name: s3-upload-trigger
  
 1. S3에 ZIP파일 업로드
     - lambda 함수 트리거
@@ -9,4 +9,4 @@
     - clamav는 dockerfile로 정의된 컨테이너 참조
     - 검사 실행
     - 판정 결과를 JSON 또는 구조화된 로그 형태로 정리
-    
+
