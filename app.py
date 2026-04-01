@@ -141,8 +141,15 @@ def list_all_extracted_files(root_dir):
 
 
 def run_clamscan(scan_root):
-    cmd = ["clamscan", "--recursive", "--no-summary", scan_root]
-
+    # 수정: -d 옵션으로 DB 경로를 명시적으로 지정합니다.
+    # Dockerfile에서 설정한 /var/lib/clamav 경로를 사용합니다.
+    cmd = [
+        "clamscan", 
+        "-d", "/var/lib/clamav", 
+        "--recursive", 
+        "--no-summary", 
+        scan_root
+    ]
     try:
         proc = subprocess.run(
             cmd,
