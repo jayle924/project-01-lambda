@@ -12,7 +12,7 @@ RUN dnf install -y \
 
 # 3. 람다 런타임 인터페이스 에뮬레이터(RIE) 설치 
 # (일반 OS 이미지를 람다에서 돌리려면 이 인터페이스가 필요합니다)
-RUN pip3 install boto3awslambdaric
+RUN pip3 install boto3 awslambdaric
 
 # 4. 바이러스 DB 폴더 준비 및 미리 다운로드
 RUN mkdir -p /var/lib/clamav && chmod 755 /var/lib/clamav
