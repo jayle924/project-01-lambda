@@ -158,6 +158,11 @@ def run_clamscan(scan_root):
             timeout=CLAMSCAN_TIMEOUT_SECONDS,
             check=False,
         )
+
+        # 추가: 만약 에러가 났다면 stderr를 로그에 강제로 찍어봅니다.
+        if proc.returncode >= 2:
+            print(f"[!] ClamAV 시스템 에러 발생 (stderr): {proc.stderr}")
+
     except subprocess.TimeoutExpired as e:
         return {
             "verdict": "error",
