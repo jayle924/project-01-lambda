@@ -1,34 +1,24 @@
-import hashlib
 import json
-import logging
+import boto3
+import hashlib
 import os
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 import zipfile
-from typing import Any
-from urllib.parse import unquote_plus
 
-import boto3
+s3 = boto3.client("s3")
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-s3_client = boto3.client("s3")
-
-
-def _sha256_file(path: str, chunk_size: int = 1024 * 1024) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+def calculate_file_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            sha256_hash.update(chunk)
+    return sha256_hash.hexdigest()
 
 
-def _safe_extract_zip(zip_path: str, dest_dir: str) -> None:
+def safe_extract_zip(zip_path, dest_dir):
     abs_dest = os.path.abspath(dest_dir)
     os.makedirs(abs_dest, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -40,10 +30,7 @@ def _safe_extract_zip(zip_path: str, dest_dir: str) -> None:
         zf.extractall(abs_dest)
 
 
-def _run_clamscan(scan_root: str) -> dict[str, Any]:
-    """
-    clamscan exit: 0=clean, 1=found, 2=error (typical ClamAV semantics).
-    """
+def run_clamscan(scan_root):
     cmd = ["clamscan", "--recursive", "--no-summary", scan_root]
     proc = subprocess.run(
         cmd,
@@ -57,110 +44,79 @@ def _run_clamscan(scan_root: str) -> dict[str, Any]:
         for line in (proc.stdout or "").splitlines()
         if "FOUND" in line
     ]
+    if proc.returncode == 0:
+        verdict = "clean"
+    elif proc.returncode == 1:
+        verdict = "infected"
+    else:
+        verdict = "error"
     return {
-        "command": cmd,
+        "verdict": verdict,
         "exit_code": proc.returncode,
+        "command": cmd,
+        "infected_report_lines": infected_lines,
         "stdout": proc.stdout or "",
         "stderr": proc.stderr or "",
-        "infected_report_lines": infected_lines,
     }
 
 
-def _clamav_verdict(scan_result: dict[str, Any]) -> str:
-    code = scan_result.get("exit_code")
-    if code == 0:
-        return "clean"
-    if code == 1:
-        return "infected"
-    return "error"
+def lambda_handler(event, context):
+    bucket = event["Records"][0]["s3"]["bucket"]["name"]
+    key = urllib.parse.unquote_plus(
+        event["Records"][0]["s3"]["object"]["key"], encoding="utf-8"
+    )
 
-
-def _process_s3_object(bucket: str, key: str) -> dict[str, Any]:
     work = tempfile.mkdtemp(prefix="s3scan_", dir="/tmp")
-    local_zip = os.path.join(work, "object.bin")
-    extract_dir = os.path.join(work, "extracted")
+    tmp_file_path = os.path.join(work, os.path.basename(key) or "object.zip")
+    extract_path = os.path.join(work, "extracted")
 
     try:
-        s3_client.download_file(bucket, key, local_zip)
+        print(f"[*] S3 다운로드 시작: {key}")
+        s3.download_file(bucket, key, tmp_file_path)
 
-        sha256_hex = _sha256_file(local_zip)
+        file_hash = calculate_file_sha256(tmp_file_path)
+        print(f"[*] 파일 SHA-256: {file_hash}")
 
-        if not zipfile.is_zipfile(local_zip):
+        if not zipfile.is_zipfile(tmp_file_path):
             return {
-                "bucket": bucket,
-                "key": key,
-                "sha256": sha256_hex,
-                "error": "Downloaded object is not a valid ZIP file",
-                "clamav": None,
+                "statusCode": 400,
+                "body": json.dumps(
+                    {
+                        "file_name": key,
+                        "hash": file_hash,
+                        "status": "Not a ZIP file",
+                    },
+                    ensure_ascii=False,
+                ),
             }
 
-        try:
-            _safe_extract_zip(local_zip, extract_dir)
-        except ValueError as e:
-            return {
-                "bucket": bucket,
-                "key": key,
-                "sha256": sha256_hex,
-                "error": str(e),
-                "clamav": None,
-            }
+        print(f"[*] 압축 해제 시작: {tmp_file_path}")
+        safe_extract_zip(tmp_file_path, extract_path)
 
-        scan = _run_clamscan(extract_dir)
-        verdict = _clamav_verdict(scan)
+        extracted_files = os.listdir(extract_path)
+        print(f"[*] 압축 해제 완료: {extracted_files}")
+
+        print("[*] ClamAV 검사 시작")
+        clamav = run_clamscan(extract_path)
+        print(f"[*] ClamAV 판정: {clamav['verdict']}, exit={clamav['exit_code']}")
 
         return {
-            "bucket": bucket,
-            "key": key,
-            "sha256": sha256_hex,
-            "clamav": {
-                "verdict": verdict,
-                "exit_code": scan.get("exit_code"),
-                "command": scan.get("command"),
-                "infected_report_lines": scan.get("infected_report_lines"),
-                "stdout": scan.get("stdout"),
-                "stderr": scan.get("stderr"),
-            },
-        }
-    finally:
-        try:
-            shutil.rmtree(work, ignore_errors=True)
-        except OSError:
-            logger.exception("Failed to remove work dir %s", work)
-
-
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    records = event.get("Records") or []
-    if not records:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "No S3 Records in event"}),
-        }
-
-    outcomes: list[dict[str, Any]] = []
-    for record in records:
-        if record.get("eventSource") != "aws:s3" and record.get("EventSource") != "aws:s3":
-            continue
-        try:
-            bucket = record["s3"]["bucket"]["name"]
-            key = unquote_plus(record["s3"]["object"]["key"])
-        except (KeyError, TypeError) as e:
-            outcomes.append({"error": f"Invalid S3 record: {e}"})
-            continue
-
-        logger.info("Processing s3://%s/%s", bucket, key)
-        try:
-            outcomes.append(_process_s3_object(bucket, key))
-        except Exception:
-            logger.exception("Failed processing s3://%s/%s", bucket, key)
-            outcomes.append(
+            "statusCode": 200,
+            "body": json.dumps(
                 {
-                    "bucket": bucket,
-                    "key": key,
-                    "error": "processing_failed",
-                }
-            )
+                    "file_name": key,
+                    "hash": file_hash,
+                    "extracted_count": len(extracted_files),
+                    "clamav": clamav,
+                    "status": "Success",
+                },
+                ensure_ascii=False,
+            ),
+        }
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"results": outcomes}, ensure_ascii=False),
-    }
+    except Exception as e:
+        print(f"[!] 에러 발생: {str(e)}")
+        raise e
+    finally:
+        if os.path.exists(work):
+            shutil.rmtree(work, ignore_errors=True)
