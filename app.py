@@ -145,7 +145,7 @@ def run_clamscan(scan_root):
     # Dockerfile에서 설정한 /var/lib/clamav 경로를 사용합니다.
     cmd = [
         "clamscan", 
-        "-d", "/var/lib/clamav", 
+        "-d", "/var/lib/clamav/main.cvd", 
         "--recursive", 
         "--no-summary", 
         scan_root
