@@ -12,7 +12,7 @@ RUN dnf install -y \
 
 # 3. 람다 런타임 인터페이스 에뮬레이터(RIE) 설치 
 # (일반 OS 이미지를 람다에서 돌리려면 이 인터페이스가 필요합니다)
-RUN pip3 install awslambdaric
+RUN pip3 install boto3awslambdaric
 
 # 4. 바이러스 DB 폴더 준비 및 미리 다운로드
 RUN mkdir -p /var/lib/clamav && chmod 755 /var/lib/clamav
@@ -26,6 +26,9 @@ RUN mkdir -p ${LAMBDA_TASK_ROOT}
 COPY app.py ${LAMBDA_TASK_ROOT}
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-# 6. 실행 명령 (awslambdaric을 통해 python 핸들러 호출)
+# 6. 환경 변수 설정 (Python이 app.py를 찾을 수 있도록 경로 지정)
+ENV PYTHONPATH=${LAMBDA_TASK_ROOT}
+
+# 7. 실행 명령 (awslambdaric을 통해 python 핸들러 호출)
 ENTRYPOINT [ "/usr/bin/python3", "-m", "awslambdaric" ]
 CMD [ "app.lambda_handler" ]
