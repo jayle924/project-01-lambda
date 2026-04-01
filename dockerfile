@@ -15,24 +15,11 @@ RUN dnf install -y \
 # (일반 OS 이미지를 람다에서 돌리려면 이 인터페이스가 필요합니다)
 RUN pip3 install boto3 awslambdaric
 
-# 4. 바이러스 DB 폴더 준비 및 정교한 curl 요청
-RUN mkdir -p /var/lib/clamav && \
-    curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-         --connect-timeout 30 \
-         --retry 3 \
-         --retry-delay 5 \
-         -f -o /var/lib/clamav/main.cvd https://database.clamav.net/main.cvd && \
-    curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-         --connect-timeout 30 \
-         --retry 3 \
-         --retry-delay 5 \
-         -f -o /var/lib/clamav/daily.cvd https://database.clamav.net/daily.cvd && \
-    curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-         --connect-timeout 30 \
-         --retry 3 \
-         --retry-delay 5 \
-         -f -o /var/lib/clamav/bytecode.cvd https://database.clamav.net/bytecode.cvd && \
-    chmod 644 /var/lib/clamav/*.cvd
+# 4. 바이러스 DB 폴더 준비 
+RUN mkdir -p /var/lib/clamav 
+# 로컬의 clamav 폴더 안에 있는 모든 .cvd 파일을 복사합니다.
+COPY clamav/*.cvd /var/lib/clamav/
+RUN chmod 644 /var/lib/clamav/*.cvd
 
 # 5. 작업 디렉토리 설정 및 코드 복사
 ENV LAMBDA_TASK_ROOT=/var/task
