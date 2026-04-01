@@ -1,33 +1,31 @@
-FROM fedora:39 AS builder
-RUN dnf install -y clamav clamav-update curl && dnf clean all
-RUN mkdir -p /var/lib/clamav
+# 1. 람다용 베이스 이미지 대신 일반 Fedora 사용
+FROM fedora:39
 
-# DB 미리 다운로드 (Wazuh 미러 사용 - 깃허브 액션 IP 차단 우회)
+# 2. 필수 패키지 및 ClamAV 설치 (Fedora는 패키지가 풍부해서 한 방에 됩니다)
+RUN dnf install -y \
+    python3 \
+    python3-pip \
+    clamav \
+    clamav-update \
+    curl \
+    && dnf clean all
+
+# 3. 람다 런타임 인터페이스 에뮬레이터(RIE) 설치 
+# (일반 OS 이미지를 람다에서 돌리려면 이 인터페이스가 필요합니다)
+RUN pip3 install awslambdaric
+
+# 4. 바이러스 DB 폴더 준비 및 미리 다운로드
+RUN mkdir -p /var/lib/clamav && chmod 755 /var/lib/clamav
 RUN curl -L -o /var/lib/clamav/main.cvd https://packages.wazuh.com/deps/clamav/main.cvd && \
     curl -L -o /var/lib/clamav/daily.cvd https://packages.wazuh.com/deps/clamav/daily.cvd && \
     curl -L -o /var/lib/clamav/bytecode.cvd https://packages.wazuh.com/deps/clamav/bytecode.cvd
 
-# 2단계: 최종 이미지 (Lambda용 Python 3.14)
-FROM public.ecr.aws/lambda/python:3.14
-
-# [해결 포인트] dnf install을 하지 않고, 빌더에서 실행 파일과 필수 라이브러리를 모두 복사합니다.
-# ClamAV 실행 파일
-COPY --from=builder /usr/bin/clamscan /usr/bin/clamscan
-
-# ClamAV 엔진 라이브러리 (핵심!)
-COPY --from=builder /usr/lib64/libclam* /usr/lib64/
-# ClamAV가 의존하는 기타 라이브러리들 (Fedora에서 검증된 것들)
-COPY --from=builder /usr/lib64/libjson-c.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libxml2.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libpcre2-8.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libltdl.so* /usr/lib64/
-
-# 바이러스 DB 복사
-COPY --from=builder /var/lib/clamav /var/lib/clamav
-
-# 권한 설정
-RUN chmod -R 755 /var/lib/clamav
-
-# Lambda 코드 복사 및 실행
+# 5. 작업 디렉토리 설정 및 코드 복사
+ENV LAMBDA_TASK_ROOT=/var/task
+RUN mkdir -p ${LAMBDA_TASK_ROOT}
 COPY app.py ${LAMBDA_TASK_ROOT}
-CMD ["app.lambda_handler"]
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# 6. 실행 명령 (awslambdaric을 통해 python 핸들러 호출)
+ENTRYPOINT [ "/usr/bin/python3", "-m", "awslambdaric" ]
+CMD [ "app.lambda_handler" ]
