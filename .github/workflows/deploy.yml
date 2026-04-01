@@ -1,0 +1,31 @@
+name: Docker Build and Push to ECR (Placeholder)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        run: echo "1. 소스 코드를 가져오는 시뮬레이션 중..."
+
+      - name: Configure AWS credentials
+        run: echo "2. AWS 인증 키를 확인하는 시뮬레이션 중..."
+
+      - name: Login to Amazon ECR
+        run: echo "3. ECR 저장소에 로그인하는 시뮬레이션 중..."
+
+      - name: Build, tag, and push image to Amazon ECR
+        run: |
+          echo "4. Docker 이미지를 빌드하고 있습니다..."
+          echo "이미지 태그: v${{ github.run_number }}"
+          echo "ECR로 이미지를 전송하는 시뮬레이션 완료!"
+
+      - name: Update Lambda Function
+        run: |
+          echo "5. AWS Lambda 함수를 최신 이미지로 교체하는 중..."
+          echo "업데이트 대상: s3-upload-trigger"
+          echo "모든 배포 과정이 성공적으로 끝났습니다!"
