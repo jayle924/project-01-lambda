@@ -9,8 +9,8 @@ RUN mkdir -p /var/lib/clamav && chmod -R 755 /var/lib/clamav
 # freshclam 설정 파일 생성 (간단 버전)
 RUN echo "DatabaseDirectory /var/lib/clamav" > /etc/freshclam.conf
 
-# 바이러스 정의 업데이트 (이미지 빌드 시 1회)
-RUN freshclam
+# 바이러스 정의 업데이트
+RUN freshclam || true
 
 # Lambda 코드 복사
 COPY app.py ${LAMBDA_TASK_ROOT}
