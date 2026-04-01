@@ -1,19 +1,23 @@
 FROM public.ecr.aws/lambda/python:3.14
 
-# ClamAV 설치
+# 1. ClamAV 설치
 RUN dnf install -y clamav clamav-update && dnf clean all
 
-# ClamAV DB 초기 생성 (없으면 scan 안 됨)
-RUN mkdir -p /var/lib/clamav && chmod -R 755 /var/lib/clamav
+# 2. 필수 디렉토리 생성 및 권한 설정
+RUN mkdir -p /var/lib/clamav && chmod 755 /var/lib/clamav
 
-# freshclam 설정 파일 생성 (간단 버전)
-RUN echo "DatabaseDirectory /var/lib/clamav" > /etc/freshclam.conf
+# 3. freshclam 설정 파일 생성 (핵심 수정 사항)
+# DatabaseMirror를 지정해줘야 어디서 받을지 압니다.
+RUN echo "DatabaseDirectory /var/lib/clamav" > /etc/freshclam.conf && \
+    echo "UpdateLogFile /tmp/freshclam.log" >> /etc/freshclam.conf && \
+    echo "DatabaseMirror database.clamav.net" >> /etc/freshclam.conf
 
-# 바이러스 정의 업데이트
-RUN freshclam || true
+# 4. 바이러스 정의 업데이트 (빌드 시 DB 포함)
+# 네트워크 순시 장애 대비를 위해 1회 시도 후 실패 시 로그 확인
+RUN freshclam
 
-# Lambda 코드 복사
+# 5. Lambda 코드 복사
 COPY app.py ${LAMBDA_TASK_ROOT}
 
-# Lambda 핸들러 지정
+# 6. Lambda 핸들러 지정
 CMD ["app.lambda_handler"]
