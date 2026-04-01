@@ -1,54 +1,27 @@
-# 1) 빌더: Amazon Linux 2023에서 ClamAV 설치
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+# 1단계: 빌더(Builder) - ClamAV 패키지가 있는 곳에서 파일만 가져오기
+FROM fedora:39 AS builder
+RUN dnf install -y clamav clamav-update curl && dnf clean all
+RUN mkdir -p /var/lib/clamav
 
-RUN dnf install -y \
-    clamav1.4 \
-    clamav1.4-lib \
-    curl \
-    findutils \
-    tar \
-    gzip \
-    unzip \
-    && dnf clean all
+# DB 미리 다운로드 (차단 없는 Wazuh 미러 사용)
+RUN curl -L -o /var/lib/clamav/main.cvd https://packages.wazuh.com/deps/clamav/main.cvd && \
+    curl -L -o /var/lib/clamav/daily.cvd https://packages.wazuh.com/deps/clamav/daily.cvd && \
+    curl -L -o /var/lib/clamav/bytecode.cvd https://packages.wazuh.com/deps/clamav/bytecode.cvd
 
-# DB 디렉토리 준비
-RUN mkdir -p /var/lib/clamav && chmod -R 755 /var/lib/clamav
-
-# DB 직접 다운로드
-RUN curl -L --fail --retry 3 --connect-timeout 20 \
-      -o /var/lib/clamav/main.cvd \
-      https://packages.wazuh.com/deps/clamav/main.cvd && \
-    curl -L --fail --retry 3 --connect-timeout 20 \
-      -o /var/lib/clamav/daily.cvd \
-      https://packages.wazuh.com/deps/clamav/daily.cvd && \
-    curl -L --fail --retry 3 --connect-timeout 20 \
-      -o /var/lib/clamav/bytecode.cvd \
-      https://packages.wazuh.com/deps/clamav/bytecode.cvd
-
-# 실행 파일/라이브러리 위치 확인용
-RUN which clamscan && ldd /usr/bin/clamscan
-
-# 2) 최종: Lambda Python 3.14
+# 2단계: 최종 이미지 (Lambda용 Python 3.14)
 FROM public.ecr.aws/lambda/python:3.14
 
-# 빌더에서 ClamAV 실행 파일과 라이브러리 복사
+# 필요한 실행 라이브러리 설치 (최소한의 도구)
+RUN dnf install -y json-c pcre2 libprelude libxml2 bzip2-libs libtool-ltdl && dnf clean all
+
+# 빌더 단계에서 설치된 ClamAV 파일들을 람다 이미지로 복사
 COPY --from=builder /usr/bin/clamscan /usr/bin/clamscan
-COPY --from=builder /usr/lib64/libclamav.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libclammspack.so* /usr/lib64/
-
-# ClamAV가 의존하는 자주 필요한 런타임 라이브러리도 같이 복사
-COPY --from=builder /usr/lib64/libbz2.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libpcre2-8.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libxml2.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libz.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libm.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libgcc_s.so* /usr/lib64/
-COPY --from=builder /usr/lib64/libstdc++.so* /usr/lib64/
-
-# DB 복사
+COPY --from=builder /usr/lib64/libclam* /usr/lib64/
 COPY --from=builder /var/lib/clamav /var/lib/clamav
 
-# Lambda 코드
-COPY app.py ${LAMBDA_TASK_ROOT}
+# 권한 설정
+RUN chmod -R 755 /var/lib/clamav
 
+# Lambda 코드 복사 및 실행
+COPY app.py ${LAMBDA_TASK_ROOT}
 CMD ["app.lambda_handler"]
