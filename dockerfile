@@ -17,9 +17,9 @@ RUN pip3 install boto3 awslambdaric
 
 # 4. 바이러스 DB 폴더 준비 및 미리 다운로드
 RUN mkdir -p /var/lib/clamav && \
-    curl -L -f --retry 3 -o /var/lib/clamav/main.cvd https://database.clamav.net/main.cvd && \
-    curl -L -f --retry 3 -o /var/lib/clamav/daily.cvd https://database.clamav.net/daily.cvd && \
-    curl -L -f --retry 3 -o /var/lib/clamav/bytecode.cvd https://database.clamav.net/bytecode.cvd && \
+    curl -L -f --retry 5 -o /var/lib/clamav/main.cvd https://packages.wazuh.com/deps/clamav/main.cvd && \
+    curl -L -f --retry 5 -o /var/lib/clamav/daily.cvd https://packages.wazuh.com/deps/clamav/daily.cvd && \
+    curl -L -f --retry 5 -o /var/lib/clamav/bytecode.cvd https://packages.wazuh.com/deps/clamav/bytecode.cvd && \
     chmod 644 /var/lib/clamav/*.cvd
 
 # 5. 작업 디렉토리 설정 및 코드 복사
