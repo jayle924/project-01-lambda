@@ -3,9 +3,6 @@ from typing import Any, Mapping, Optional
 
 from botocore.exceptions import ClientError
 
-def func():
-    pass
-
 def publish_scan_notification(sns_client, payload: Mapping[str, Any]) -> Optional[str]:
     """
     SNS Topic을 구독한 수신자(이메일 등)에게 ClamAV 스캔 결과를 발행합니다.

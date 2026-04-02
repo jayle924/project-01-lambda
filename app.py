@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 import tempfile
 import urllib.parse
@@ -28,10 +29,26 @@ sns_client = boto3.client("sns")
 
 
 def lambda_handler(event, context):
-    bucket = event["Records"][0]["s3"]["bucket"]["name"]
-    key = urllib.parse.unquote_plus(
-        event["Records"][0]["s3"]["object"]["key"], encoding="utf-8"
-    )
+    # S3 직접 트리거 대신 SQS를 중간에 두면, SQS 이벤트의 Record.body에 S3 이벤트(JSON)가 문자열로 들어옵니다.
+    # (구성에 따라 body 포맷이 달라질 수 있어, 최대한 방어적으로 파싱합니다.)
+    sqs_record = event["Records"][0]
+    body = sqs_record.get("body")
+
+    if isinstance(body, str):
+        payload = json.loads(body)
+    else:
+        payload = body or sqs_record
+
+    # 1) body가 "S3 event" 형태라면 payload["Records"][0]["s3"]를 사용
+    if isinstance(payload, dict) and payload.get("Records"):
+        bucket = payload["Records"][0]["s3"]["bucket"]["name"]
+        key = urllib.parse.unquote_plus(
+            payload["Records"][0]["s3"]["object"]["key"], encoding="utf-8"
+        )
+    else:
+        # 2) body가 단순 {bucket, key} 형태라면 그 키를 사용
+        bucket = payload["bucket"]
+        key = urllib.parse.unquote_plus(payload["key"], encoding="utf-8")
 
     work = tempfile.mkdtemp(prefix="s3scan_", dir="/tmp")
     tmp_file_path = os.path.join(work, os.path.basename(key) or "object.zip")
@@ -140,7 +157,7 @@ def lambda_handler(event, context):
         )
 
     except ValueError as e:
-        print(f"[!] ZIP 정책 위반: {str(e)}")
+        print(f"[!] 유효하지 않은 ZIP 파일: {str(e)}")
         return build_response(
             400,
             {
