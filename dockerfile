@@ -7,7 +7,6 @@ RUN dnf install -y \
     python3-pip \
     clamav \
     clamav-update \
-    curl \
     libtool-ltdl \
     && dnf clean all
 
