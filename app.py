@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import tempfile
@@ -10,6 +9,7 @@ from botocore.exceptions import ClientError
 
 from file_hash import calculate_file_sha256
 from scan import run_clamscan
+from sns import publish_scan_notification
 from util import (
     LOG_PREVIEW_FILE_LIMIT,
     build_response,
@@ -24,6 +24,7 @@ from zip_ops import (
 )
 
 s3 = boto3.client("s3")
+sns_client = boto3.client("sns")
 
 
 def lambda_handler(event, context):
@@ -53,11 +54,11 @@ def lambda_handler(event, context):
                 },
             )
 
-        print(f"[*] S3 다운로드 시작: {key}")
+        # print(f"[*] S3 다운로드 시작: {key}")
         s3.download_file(bucket, key, tmp_file_path)
 
         file_hash = calculate_file_sha256(tmp_file_path)
-        print(f"[*] 파일 SHA-256: {file_hash}")
+        # print(f"[*] 파일 SHA-256: {file_hash}")
 
         if not zipfile.is_zipfile(tmp_file_path):
             return build_response(
@@ -69,18 +70,18 @@ def lambda_handler(event, context):
                 },
             )
 
-        print("[*] ZIP 내부 유효성 검사 시작")
+        # print("[*] ZIP 내부 유효성 검사 시작")
         zip_meta = validate_zip_contents(tmp_file_path)
-        print(
-            f"[*] ZIP 검사 완료 - files={zip_meta['total_files']}, "
-            f"estimated_uncompressed={zip_meta['total_uncompressed']} bytes "
-            f"({format_bytes(zip_meta['total_uncompressed'])})"
-        )
+        # print(
+        #     f"[*] ZIP 검사 완료 - files={zip_meta['total_files']}, "
+        #     f"estimated_uncompressed={zip_meta['total_uncompressed']} bytes "
+        #     f"({format_bytes(zip_meta['total_uncompressed'])})"
+        # )
 
         preview_files = zip_meta["file_names"][:LOG_PREVIEW_FILE_LIMIT]
-        print(f"[*] ZIP 내부 파일 미리보기({len(preview_files)}개): {preview_files}")
+        # print(f"[*] ZIP 내부 파일 미리보기({len(preview_files)}개): {preview_files}")
 
-        print(f"[*] 압축 해제 시작: {tmp_file_path}")
+        # print(f"[*] 압축 해제 시작: {tmp_file_path}")
         safe_extract_zip(tmp_file_path, extract_path)
 
         extracted_files = list_all_extracted_files(extract_path)
@@ -88,9 +89,9 @@ def lambda_handler(event, context):
         extracted_preview = extracted_files[:LOG_PREVIEW_FILE_LIMIT]
 
         print(f"[*] 압축 해제 완료 - total_files={extracted_count}")
-        print(f"[*] 압축 해제 파일 미리보기({len(extracted_preview)}개): {extracted_preview}")
+        # print(f"[*] 압축 해제 파일 미리보기({len(extracted_preview)}개): {extracted_preview}")
 
-        print("[*] ClamAV 검사 시작")
+        # print("[*] ClamAV 검사 시작")
         clamav = run_clamscan(extract_path)
         print(f"[*] ClamAV 판정: {clamav['verdict']}, exit={clamav['exit_code']}")
 
@@ -113,7 +114,7 @@ def lambda_handler(event, context):
             "status": "Success",
         }
 
-        print(f"[*] Final Response: {json.dumps(final_response_body, indent=2)}")
+        publish_scan_notification(sns_client, final_response_body)
 
         return build_response(200, final_response_body)
 
@@ -163,4 +164,3 @@ def lambda_handler(event, context):
     finally:
         if os.path.exists(work):
             shutil.rmtree(work, ignore_errors=True)
-            print(f"[*] 작업 디렉터리 정리 완료: {work}")
