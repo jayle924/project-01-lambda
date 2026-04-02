@@ -24,7 +24,7 @@ RUN chmod 644 /var/lib/clamav/*.cvd
 # 5. 작업 디렉토리 설정 및 코드 복사
 ENV LAMBDA_TASK_ROOT=/var/task
 RUN mkdir -p ${LAMBDA_TASK_ROOT}
-COPY app.py ${LAMBDA_TASK_ROOT}
+COPY app.py hash.py scan.py util.py zip_ops.py ${LAMBDA_TASK_ROOT}
 WORKDIR ${LAMBDA_TASK_ROOT}
 
 # 6. 환경 변수 설정 (Python이 app.py를 찾을 수 있도록 경로 지정)
