@@ -28,12 +28,7 @@ s3 = boto3.client("s3")
 sns_client = boto3.client("sns")
 
 
-def lambda_handler(event, context):
-    # 변수 초기화 (에러 방지)
-    bucket = None
-    key = None
-
-    sqs_record = event["Records"][0]
+def _parse_bucket_key_from_sqs_record(sqs_record):
     body = sqs_record.get("body")
 
     if isinstance(body, str):
@@ -41,7 +36,7 @@ def lambda_handler(event, context):
             payload = json.loads(body)
         except json.JSONDecodeError:
             print(f"[!] body가 JSON이 아닙니다: {body}")
-            return {"status": "ignored", "reason": "body is not valid json"}
+            return None, None
     else:
         payload = body or sqs_record
 
@@ -52,22 +47,20 @@ def lambda_handler(event, context):
         key = urllib.parse.unquote_plus(
             s3_info.get("object", {}).get("key", ""), encoding="utf-8"
         )
-    
+        return bucket, key
+
     # 2) 사용자 정의 JSON 형태 (직접 SQS에 넣었을 때)
-    elif isinstance(payload, dict) and "bucket" in payload:
+    if isinstance(payload, dict) and "bucket" in payload:
         bucket = payload.get("bucket")
         key = urllib.parse.unquote_plus(payload.get("key", ""), encoding="utf-8")
-    
+        return bucket, key
+
     # 3) 인식할 수 없는 포맷
-    else:
-        print(f"[!] 알 수 없는 메시지 형식입니다: {payload}")
-        return {"status": "ignored", "reason": "invalid payload format"}
+    print(f"[!] 알 수 없는 메시지 형식입니다: {payload}")
+    return None, None
 
-    # bucket이나 key가 없으면 이후 로직 진행 불가
-    if not bucket or not key:
-        print("[!] 버킷 이름 또는 키를 찾을 수 없습니다.")
-        return {"status": "error", "message": "Missing bucket or key"}
 
+def _process_one_object(bucket: str, key: str):
     work = tempfile.mkdtemp(prefix="s3scan_", dir="/tmp")
     tmp_file_path = os.path.join(work, os.path.basename(key) or "object.zip")
     extract_path = os.path.join(work, "extracted")
@@ -89,11 +82,9 @@ def lambda_handler(event, context):
                 },
             )
 
-        # print(f"[*] S3 다운로드 시작: {key}")
         s3.download_file(bucket, key, tmp_file_path)
 
         file_hash = calculate_file_sha256(tmp_file_path)
-        # print(f"[*] 파일 SHA-256: {file_hash}")
 
         if not zipfile.is_zipfile(tmp_file_path):
             return build_response(
@@ -105,28 +96,13 @@ def lambda_handler(event, context):
                 },
             )
 
-        # print("[*] ZIP 내부 유효성 검사 시작")
         zip_meta = validate_zip_contents(tmp_file_path)
-        # print(
-        #     f"[*] ZIP 검사 완료 - files={zip_meta['total_files']}, "
-        #     f"estimated_uncompressed={zip_meta['total_uncompressed']} bytes "
-        #     f"({format_bytes(zip_meta['total_uncompressed'])})"
-        # )
-
-        preview_files = zip_meta["file_names"][:LOG_PREVIEW_FILE_LIMIT]
-        # print(f"[*] ZIP 내부 파일 미리보기({len(preview_files)}개): {preview_files}")
-
-        # print(f"[*] 압축 해제 시작: {tmp_file_path}")
         safe_extract_zip(tmp_file_path, extract_path)
 
         extracted_files = list_all_extracted_files(extract_path)
         extracted_count = len(extracted_files)
-        extracted_preview = extracted_files[:LOG_PREVIEW_FILE_LIMIT]
-
         print(f"[*] 압축 해제 완료 - total_files={extracted_count}")
-        # print(f"[*] 압축 해제 파일 미리보기({len(extracted_preview)}개): {extracted_preview}")
 
-        # print("[*] ClamAV 검사 시작")
         clamav = run_clamscan(extract_path)
         print(f"[*] ClamAV 판정: {clamav['verdict']}, exit={clamav['exit_code']}")
 
@@ -199,3 +175,27 @@ def lambda_handler(event, context):
     finally:
         if os.path.exists(work):
             shutil.rmtree(work, ignore_errors=True)
+
+
+def lambda_handler(event, context):
+    records = event.get("Records") or []
+    if not records:
+        return build_response(400, {"status": "no_records"})
+
+    results = []
+    for idx, sqs_record in enumerate(records):
+        bucket, key = _parse_bucket_key_from_sqs_record(sqs_record)
+        if not bucket or not key:
+            results.append(
+                {
+                    "index": idx,
+                    "status": "ignored",
+                    "reason": "Missing bucket/key",
+                }
+            )
+            continue
+
+        resp = _process_one_object(bucket, key)
+        results.append({"index": idx, "response": resp})
+
+    return build_response(200, {"results": results})
