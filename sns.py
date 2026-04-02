@@ -3,6 +3,8 @@ from typing import Any, Mapping, Optional
 
 from botocore.exceptions import ClientError
 
+def func():
+    pass
 
 def publish_scan_notification(sns_client, payload: Mapping[str, Any]) -> Optional[str]:
     """
