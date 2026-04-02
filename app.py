@@ -29,26 +29,44 @@ sns_client = boto3.client("sns")
 
 
 def lambda_handler(event, context):
-    # S3 직접 트리거 대신 SQS를 중간에 두면, SQS 이벤트의 Record.body에 S3 이벤트(JSON)가 문자열로 들어옵니다.
-    # (구성에 따라 body 포맷이 달라질 수 있어, 최대한 방어적으로 파싱합니다.)
+    # 변수 초기화 (에러 방지)
+    bucket = None
+    key = None
+
     sqs_record = event["Records"][0]
     body = sqs_record.get("body")
 
     if isinstance(body, str):
-        payload = json.loads(body)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            print(f"[!] body가 JSON이 아닙니다: {body}")
+            return {"status": "ignored", "reason": "body is not valid json"}
     else:
         payload = body or sqs_record
 
-    # 1) body가 "S3 event" 형태라면 payload["Records"][0]["s3"]를 사용
+    # 1) S3 이벤트 알림 형태 (S3 -> SQS -> Lambda)
     if isinstance(payload, dict) and payload.get("Records"):
-        bucket = payload["Records"][0]["s3"]["bucket"]["name"]
+        s3_info = payload["Records"][0].get("s3", {})
+        bucket = s3_info.get("bucket", {}).get("name")
         key = urllib.parse.unquote_plus(
-            payload["Records"][0]["s3"]["object"]["key"], encoding="utf-8"
+            s3_info.get("object", {}).get("key", ""), encoding="utf-8"
         )
+    
+    # 2) 사용자 정의 JSON 형태 (직접 SQS에 넣었을 때)
+    elif isinstance(payload, dict) and "bucket" in payload:
+        bucket = payload.get("bucket")
+        key = urllib.parse.unquote_plus(payload.get("key", ""), encoding="utf-8")
+    
+    # 3) 인식할 수 없는 포맷
     else:
-        # 2) body가 단순 {bucket, key} 형태라면 그 키를 사용
-        bucket = payload["bucket"]
-        key = urllib.parse.unquote_plus(payload["key"], encoding="utf-8")
+        print(f"[!] 알 수 없는 메시지 형식입니다: {payload}")
+        return {"status": "ignored", "reason": "invalid payload format"}
+
+    # bucket이나 key가 없으면 이후 로직 진행 불가
+    if not bucket or not key:
+        print("[!] 버킷 이름 또는 키를 찾을 수 없습니다.")
+        return {"status": "error", "message": "Missing bucket or key"}
 
     work = tempfile.mkdtemp(prefix="s3scan_", dir="/tmp")
     tmp_file_path = os.path.join(work, os.path.basename(key) or "object.zip")
