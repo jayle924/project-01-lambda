@@ -1,5 +1,4 @@
 import os
-import json
 import shutil
 import tempfile
 import urllib.parse
@@ -26,38 +25,6 @@ from zip_ops import (
 
 s3 = boto3.client("s3")
 sns_client = boto3.client("sns")
-
-
-def _parse_bucket_key_from_sqs_record(sqs_record):
-    body = sqs_record.get("body")
-
-    if isinstance(body, str):
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            print(f"[!] body가 JSON이 아닙니다: {body}")
-            return None, None
-    else:
-        payload = body or sqs_record
-
-    # 1) S3 이벤트 알림 형태 (S3 -> SQS -> Lambda)
-    if isinstance(payload, dict) and payload.get("Records"):
-        s3_info = payload["Records"][0].get("s3", {})
-        bucket = s3_info.get("bucket", {}).get("name")
-        key = urllib.parse.unquote_plus(
-            s3_info.get("object", {}).get("key", ""), encoding="utf-8"
-        )
-        return bucket, key
-
-    # 2) 사용자 정의 JSON 형태 (직접 SQS에 넣었을 때)
-    if isinstance(payload, dict) and "bucket" in payload:
-        bucket = payload.get("bucket")
-        key = urllib.parse.unquote_plus(payload.get("key", ""), encoding="utf-8")
-        return bucket, key
-
-    # 3) 인식할 수 없는 포맷
-    print(f"[!] 알 수 없는 메시지 형식입니다: {payload}")
-    return None, None
 
 
 def _process_one_object(bucket: str, key: str):
@@ -178,24 +145,26 @@ def _process_one_object(bucket: str, key: str):
 
 
 def lambda_handler(event, context):
-    records = event.get("Records") or []
-    if not records:
-        return build_response(400, {"status": "no_records"})
+    """
+    EventBridge S3 Object Created 이벤트 단일 건을 처리합니다.
+    event.detail.bucket.name / event.detail.object.key 를 사용합니다.
+    """
+    detail = event.get("detail") or {}
+    bucket_info = detail.get("bucket") or {}
+    object_info = detail.get("object") or {}
 
-    results = []
-    for idx, sqs_record in enumerate(records):
-        bucket, key = _parse_bucket_key_from_sqs_record(sqs_record)
-        if not bucket or not key:
-            results.append(
-                {
-                    "index": idx,
-                    "status": "ignored",
-                    "reason": "Missing bucket/key",
-                }
-            )
-            continue
+    bucket = bucket_info.get("name")
+    key_raw = object_info.get("key")
 
-        resp = _process_one_object(bucket, key)
-        results.append({"index": idx, "response": resp})
+    if not bucket or not key_raw:
+        print(f"[!] EventBridge 이벤트에서 bucket/key를 찾을 수 없습니다: {event}")
+        return build_response(
+            400,
+            {
+                "status": "error",
+                "message": "Missing bucket or key in EventBridge event",
+            },
+        )
 
-    return build_response(200, {"results": results})
+    key = urllib.parse.unquote_plus(key_raw, encoding="utf-8")
+    return _process_one_object(bucket, key)
